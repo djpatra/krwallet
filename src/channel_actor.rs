@@ -1,11 +1,11 @@
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{map_channel_recv_err, map_channel_send_err, ProcessorResult};
+use crate::{map_channel_recv_err, map_channel_send_err, ProcessorError, ProcessorResult};
 
 #[derive(Debug)]
 pub struct ActorRef<M>
 where
-    M: Send + 'static,
+    M: Send,
 {
     sender: mpsc::Sender<M>,
 }
@@ -18,7 +18,7 @@ impl<M: Send + 'static> Clone for ActorRef<M> {
     }
 }
 
-impl<M: Send + 'static> ActorRef<M> {
+impl<M: Send> ActorRef<M> {
     /// Fire-and-forget send. 
     pub async fn tell(&self, msg: M) -> ProcessorResult<()> {
         self.sender.send(msg).await.map_err(map_channel_send_err)
@@ -39,7 +39,7 @@ impl<M: Send + 'static> ActorRef<M> {
 #[async_trait::async_trait]
 pub trait ChannelActor<M>
 where
-    M: Send + 'static,
+    M: Send,
 {
     async fn handle(&mut self, msg: M) -> ProcessorResult<()>;
 }
@@ -56,11 +56,17 @@ where
 
     let _join_handle = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            // Not the right way to kill an actor. Ideally, we should match 
-            // the error to some ACTOR_STOP_MSG and then exit
             if let Err(err) = actor_instance.handle(msg).await {
-                eprintln!("Actor error: {:?}", err);
-                break;
+                // Not the right way to kill an actor. Ideally, we should have 
+                // an explicit PoisonPill sent to self and then exit
+                match err {
+                    ProcessorError::FatalError => {
+                        break;
+                    },
+                    _ => {
+                        eprintln!("Actor error: {:?}", err);
+                    }
+                }
             }
         }
     });

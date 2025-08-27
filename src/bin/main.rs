@@ -1,8 +1,9 @@
 use std::{env, error::Error, fs::File};
 
-use csv::{ReaderBuilder, Trim};
-use krwallet::{wallet::processor::TransactionProcessor, CsvStream};
+use csv::{ReaderBuilder, Trim, WriterBuilder};
+use krwallet::{wallet::processor::TransactionProcessor, CsvStreamReader, CsvStreamWriter};
 
+// Someday we will read these const variables from config
 const ACTOR_COUNT: usize = 10;
 
 const BUFFER_SIZE:usize = 100;
@@ -14,9 +15,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         std::process::exit(1);
     }
 
-    // The main function is now just responsible for I/O and orchestration.
+    // The main function is only responsible for I/O and orchestration.
     // It's a light interface between the CLI to the core logic.
-
 
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     (1..=ACTOR_COUNT).for_each(|thread| {
@@ -24,22 +24,25 @@ fn main() -> Result<(), Box<dyn Error>> {
     });
 
     // The code should fail if Tokio runtime could not be build
-    let runtime = builder.enable_all().build().unwrap();
+    let runtime = builder.enable_all().build()?;
     
     let input_file = File::open(&args[1])?;
     let reader = ReaderBuilder::new()
                 .trim(Trim::All)
                 .from_reader(input_file);
 
+    let writer = WriterBuilder::new()
+                    .has_headers(true)
+                    .from_writer(std::io::stdout());
+
     
     runtime.block_on(async move {
         let mut transaction_processor = TransactionProcessor::new(ACTOR_COUNT, BUFFER_SIZE).await;   
 
-        transaction_processor.process(CsvStream {
-                reader,
-        }).await;
-
-        // transaction_processor.output();
+        // Ignoring the errors from TransactionProcessor for now
+        let _ = transaction_processor.process(CsvStreamReader { reader }).await;
+        
+        let _ = transaction_processor.output(CsvStreamWriter { writer }).await;
     });
 
     Ok(())

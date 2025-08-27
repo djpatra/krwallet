@@ -1,14 +1,38 @@
 use rust_decimal::Decimal;
+use serde::Serialize;
+use tokio::sync::oneshot;
 
-use crate::{channel_actor::{self, ActorRef}, CsvStream, ProcessorError, ProcessorResult, Transaction, TransactionType};
+use crate::{channel_actor::{self, ActorRef}, CsvStreamReader, CsvStreamWriter, 
+    ProcessorError, ProcessorResult, Transaction, TransactionType
+};
 
-use super::wallet_actor::{WalletActor, WalletActorMessages};
+use super::wallet_actor::{WalletActor, WalletActorMessages, WalletState};
 
 pub struct TransactionProcessor {
     actor_count: usize,
     wallet_actors: Vec<ActorRef<WalletActorMessages>>,
 }
 
+#[derive(Serialize)]
+struct WalletCsvView {
+    client_id: u16,
+    available: String,
+    held: String,
+    total: String,
+    locked: bool,
+}
+
+impl From<WalletState> for WalletCsvView {
+    fn from(state: WalletState) -> Self {
+        Self {
+            client_id: state.client_id,
+            available: format!("{:.4}", state.wallet.available.round_dp(4)),
+            held: format!("{:.4}", state.wallet.held.round_dp(4)),
+            total: format!("{:.4}", state.wallet.total.round_dp(4)),
+            locked: state.wallet.locked,
+        }
+    }
+}
 
 impl TransactionProcessor {
     pub async fn new(actor_count: usize, channel_buffer_size: usize) -> Self {
@@ -25,7 +49,7 @@ impl TransactionProcessor {
         }
     }
     
-    pub async fn process<R>(&mut self, mut stream: CsvStream<R>) -> ProcessorResult<()>
+    pub async fn process<R>(&mut self, mut stream: CsvStreamReader<R>) -> ProcessorResult<()>
     where
         R: std::io::Read,
     {
@@ -55,10 +79,34 @@ impl TransactionProcessor {
             let wallet_actor = self.wallet_actors.get(tx.client as usize % self.actor_count).unwrap();
             if let Err(e) = wallet_actor.tell(WalletActorMessages::Tx(tx)).await {
                 eprintln!("Channel Full, increase buffer size and run the test again {}", e);
-                break;
+                return Err(ProcessorError::FatalError)
             }
         }
         
         Ok(())
     }
+
+    pub async fn output<W>(&mut self, mut stream: CsvStreamWriter<W>) -> ProcessorResult<()> 
+    where
+        W: std::io::Write
+    {
+        for actor in self.wallet_actors.iter() {
+            let (tx, rx) = oneshot::channel();
+
+            if let Ok(wallet_state) = actor.ask(WalletActorMessages::Output(tx), rx).await {
+                for wallet in wallet_state {
+                    let wallet_csv_view: WalletCsvView = wallet.into();
+                    
+                    stream.writer.serialize(wallet_csv_view).map_err(|e| { 
+                        eprintln!("SERDE ERROR: {:?}", e);
+                        ProcessorError::Serialization(e.to_string())})?;
+                }
+            }
+        }    
+
+        stream.writer.flush().map_err(|e| ProcessorError::Serialization(e.to_string()))?;
+
+        Ok(())
+    }
+    
 }    

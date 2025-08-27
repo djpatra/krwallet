@@ -39,6 +39,12 @@ pub enum ProcessorError {
     
     #[error("Invalid transaction state for dispute")]
     InvalidDisputeState,
+
+    #[error("Fatal Actor error; Exit")]
+    FatalError,
+
+    #[error("Serialization error: {0}")]
+    Serialization(String),    
 }
 
 pub fn map_channel_send_err<M>(err: SendError<M>) -> ProcessorError {
@@ -100,12 +106,19 @@ fn default_disputed() -> bool {
 
 
 /// A streaming CSV reader
-pub struct CsvStream<R> 
+pub struct CsvStreamReader<R> 
 where 
     R: std::io::Read,
 {
     pub reader: csv::Reader<R>,
 }
 
+/// A streaming CSV writer
+pub struct CsvStreamWriter<W> 
+where 
+    W: std::io::Write,
+{
+    pub writer: csv::Writer<W>,
+}
 
 
