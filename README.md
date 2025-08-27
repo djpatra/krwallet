@@ -23,7 +23,7 @@ Deterministic and testable transaction outcomes
                     ▼
           ┌─────────────────────┐________> Csv Output to Stdout 
           │ Transaction Processor│    
-          └────────┬────────────┘ _______       
+          └────────┬────────────┘ <_______       
                    │                     | Wallets for all
                    ▼                     | Clients
          ┌────────────────────┐          |
