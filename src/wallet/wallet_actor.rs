@@ -179,6 +179,7 @@ impl ChannelActor<WalletActorMessages> for WalletActor {
             },
 
             Output(sender) => {
+                // Consume the state as we have finished processing the transactions
                 let state: Vec<WalletState> = std::mem::take(&mut self.wallets).into_iter()
                     .map(|(client_id, mut wallet)| {
                         wallet.total = wallet.available + wallet.held;
