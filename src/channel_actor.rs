@@ -55,17 +55,18 @@ where
     let actor_ref = ActorRef { sender: tx };
 
     let _join_handle = tokio::spawn(async move {
+        // Run the actor indefinitely
         while let Some(msg) = rx.recv().await {
             if let Err(err) = actor_instance.handle(msg).await {
                 // Not the right way to kill an actor. Ideally, we should have 
-                // an explicit PoisonPill sent to self and then exit
+                // an explicit PoisonPill message sent to self and then exit
                 match err {
                     ProcessorError::FatalError => {
                         break;
                     },
                     _ => {
-                        // Commenting out this so that tests do not fail; 
-                        // Should log errors to file
+                        // Commenting out this so that test outputs do not get polluted; 
+                        // ToDo: Log errors to file
                         // eprintln!("Actor error: {:?}", err);
                     }
                 }
