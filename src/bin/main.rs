@@ -4,9 +4,9 @@ use csv::{ReaderBuilder, Trim, WriterBuilder};
 use krwallet::{wallet::processor::TransactionProcessor, CsvStreamReader, CsvStreamWriter};
 
 // Someday we will read these const variables from config
-const ACTOR_COUNT: usize = 10;
+const ACTOR_COUNT: usize = 4;
 
-const BUFFER_SIZE:usize = 100;
+const BUFFER_SIZE:usize = 20;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         builder.worker_threads(thread);
     });
 
-    // The code should fail if Tokio runtime could not be build
+    // The code should fail if the runtime could not be build
     let runtime = builder.enable_all().build()?;
     
     let input_file = File::open(&args[1])?;

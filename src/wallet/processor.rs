@@ -35,6 +35,7 @@ impl From<WalletState> for WalletCsvView {
 }
 
 impl TransactionProcessor {
+    /// Creates actors with bounded channels
     pub async fn new(actor_count: usize, channel_buffer_size: usize) -> Self {
         let mut wallet_actors = Vec::with_capacity(actor_count);
         for _ in 0..actor_count {
@@ -64,6 +65,9 @@ impl TransactionProcessor {
 
             // Validate amount for Deposits and Withdrawl. This validation also ensures
             // that we can safely unwrap amount out of the Option
+            //
+            // ** Do not remove this. Removing this may make the WalletActor panic when it 
+            // unwraps the amount out of Option.
             if matches!(tx.tx_type, TransactionType::Deposit | TransactionType::Withdrawal) {
                 let amount = tx.amount.ok_or(ProcessorError::InvalidAmount {
                     message: format!("invalid amount for tx_id={}", tx.id)
@@ -76,7 +80,12 @@ impl TransactionProcessor {
                 }
             }
 
+            // Find the wallet actor to route this transaction to. All transactions from a client
+            // will always go to the same WalletActor, so that, the client always has a single and
+            // complete state in the system.
             let wallet_actor = self.wallet_actors.get(tx.client as usize % self.actor_count).unwrap();
+
+            // Sending WalletActor the transaction
             if let Err(e) = wallet_actor.tell(WalletActorMessages::Tx(tx)).await {
                 eprintln!("Channel Full, increase buffer size and run the test again {}", e);
                 return Err(ProcessorError::FatalError)
@@ -93,6 +102,7 @@ impl TransactionProcessor {
         for actor in self.wallet_actors.iter() {
             let (tx, rx) = oneshot::channel();
 
+            // Sending command to fetch all the wallets from a WalletActor
             if let Ok(wallet_state) = actor.ask(WalletActorMessages::Output(tx), rx).await {
                 for wallet in wallet_state {
                     let wallet_csv_view: WalletCsvView = wallet.into();

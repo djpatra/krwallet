@@ -29,6 +29,7 @@ pub(crate) struct  WalletState {
 
 impl Wallet {
     pub fn process_transaction(&mut self, tx: Transaction) -> ProcessorResult<()> {
+        // If the wallet is locked, then no deposits and withdrawals are allowed
         if self.locked && matches!(tx.tx_type, TransactionType::Deposit | TransactionType::Withdrawal) {
             return Err(ProcessorError::AccountLocked { client_id: tx.client })
         }
@@ -46,8 +47,10 @@ impl Wallet {
         if self.transactions.contains_key(&tx.id) {
             return Err(ProcessorError::DuplicateTransaction { tx_id: tx.id });
         }
-        
+
+        // Safe unwrap as validation done earlier in Processor        
         self.available += tx.amount.unwrap();
+
         self.transactions.insert(tx.id, tx);
         Ok(())
     }
@@ -58,6 +61,7 @@ impl Wallet {
             return Err(ProcessorError::DuplicateTransaction { tx_id: tx.id });
         }
 
+        // Safe unwrap as validation done earlier in Processor        
         let amount = tx.amount.unwrap();
         
         if self.available < amount {
@@ -75,6 +79,7 @@ impl Wallet {
             .ok_or(ProcessorError::TransactionNotFound { tx_id })?;
 
         tx.disputed = true;
+        // Safe unwrap as validation done earlier in Processor        
         let amount = tx.amount.unwrap();
         
         match tx.tx_type {
