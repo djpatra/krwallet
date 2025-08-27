@@ -37,6 +37,7 @@ Deterministic and testable transaction outcomes
          └────────────────────┘
 
 **Input**
+
 type,client,tx,amount
 deposit, 1, 1, 1.0
 deposit, 2, 2, 2.0
@@ -45,6 +46,7 @@ withdrawal, 1, 4, 1.5
 withdrawal, 2, 5, 3.0
 
 **Output**
+
 client_id,available,held,total,locked
 1,1.5000,0.0000,1.5000,false
 2,2.0000,0.0000,2.0000,false
