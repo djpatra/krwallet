@@ -1,9 +1,11 @@
-**Overview**
+# krwallet
+
+# Overview
 
 This is an actor-based wallet service that manages client accounts and their transactions concurrently. The design enables independent processing of multiple transaction types, including deposits, withdrawals, disputes, resolves, and chargebacks, for multiple clients simultaneously. The Transaction Processor establishes a `many-to-one` relationship between clients and WalletActors: each client is mapped to a single WalletActor, while a WalletActor can handle multiple clients. Each WalletActor maintains the wallet state for its assigned clients and is responsible for applying all transaction-induced mutations to their wallets.
 
 
-**Key design goals**
+# Key design goals
 
 Threadsafe handling of multiple clients
 
@@ -14,7 +16,7 @@ Separation of concerns using actors
 Deterministic and testable transaction outcomes
 
 
-**Architecture**
+# Architecture
 
            ┌─────────────────┐
            │ Transaction CSV │
@@ -36,7 +38,8 @@ Deterministic and testable transaction outcomes
          │ └───────────────┘  │
          └────────────────────┘
 
-**Input**
+
+# Input
 
 type,client,tx,amount
 
@@ -51,7 +54,7 @@ withdrawal, 1, 4, 1.5
 withdrawal, 2, 5, 3.0
 
 
-**Output**
+# Output
 
 client_id,available,held,total,locked
 
