@@ -83,12 +83,12 @@ impl TransactionProcessor {
             // Find the wallet actor to route this transaction to. All transactions from a client
             // will always go to the same WalletActor, so that, the client always has a single and
             // complete state in the system.
-            let wallet_actor = self.wallet_actors.get(tx.client as usize % self.actor_count).unwrap();
-
-            // Sending WalletActor the transaction
-            if let Err(e) = wallet_actor.tell(WalletActorMessages::Tx(tx)).await {
-                eprintln!("Channel Full, increase buffer size and run the test again {}", e);
-                return Err(ProcessorError::FatalError);
+            if let Some(wallet_actor) = self.wallet_actors.get(tx.client as usize % self.actor_count) {
+                // Sending WalletActor the transaction
+                if let Err(e) = wallet_actor.tell(WalletActorMessages::Tx(tx)).await {
+                    eprintln!("Channel Full, increase buffer size and run the test again {}", e);
+                    return Err(ProcessorError::FatalError);
+                }
             }
         }
 
