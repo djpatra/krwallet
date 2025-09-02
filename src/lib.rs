@@ -1,18 +1,19 @@
 use std::str::FromStr;
 
-use serde::Deserialize;
+use csv_async::AsyncDeserializer;
 use rust_decimal::Decimal;
+use serde::Deserialize;
 use thiserror::Error;
 use tokio::sync::{mpsc::error::SendError, oneshot::error::RecvError};
 
-pub mod wallet;
 pub mod channel_actor;
+pub mod wallet;
 
 #[derive(Error, Debug)]
 pub enum ProcessorError {
     #[error("CSV parsing error: {0}")]
     CsvError(#[from] csv::Error),
-    
+
     #[error("Actor send error: {0}")]
     ActorTxSendError(String),
 
@@ -24,19 +25,22 @@ pub enum ProcessorError {
 
     #[error("Invalid transaction: {message}")]
     InvalidTransaction { message: String },
-    
+
     #[error("Account locked: client {client_id}")]
     AccountLocked { client_id: u16 },
-    
+
     #[error("Insufficient funds: available {available}, required {required}")]
-    InsufficientFunds { available: rust_decimal::Decimal, required: rust_decimal::Decimal },
-    
+    InsufficientFunds {
+        available: rust_decimal::Decimal,
+        required: rust_decimal::Decimal,
+    },
+
     #[error("Transaction not found: {tx_id}")]
     TransactionNotFound { tx_id: u32 },
-    
+
     #[error("Duplicate transaction: {tx_id}")]
     DuplicateTransaction { tx_id: u32 },
-    
+
     #[error("Invalid transaction state for dispute")]
     InvalidDisputeState,
 
@@ -44,7 +48,7 @@ pub enum ProcessorError {
     FatalError,
 
     #[error("Serialization error: {0}")]
-    Serialization(String),    
+    Serialization(String),
 }
 
 pub fn map_channel_send_err<M>(err: SendError<M>) -> ProcessorError {
@@ -60,7 +64,6 @@ pub fn map_channel_recv_err(err: RecvError) -> ProcessorError {
 pub type ProcessorResult<T> = std::result::Result<T, ProcessorError>;
 
 unsafe impl Send for ProcessorError {}
-
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -91,11 +94,7 @@ where
 {
     let opt: Option<String> = Option::deserialize(deserializer)?;
     match opt {
-        Some(s) if !s.trim().is_empty() => {
-            Decimal::from_str(&s)
-                .map(Some)
-                .map_err(serde::de::Error::custom)
-        }
+        Some(s) if !s.trim().is_empty() => Decimal::from_str(&s).map(Some).map_err(serde::de::Error::custom),
         _ => Ok(None),
     }
 }
@@ -104,21 +103,15 @@ fn default_disputed() -> bool {
     false
 }
 
-
 /// A streaming CSV reader
-pub struct CsvStreamReader<R> 
-where 
-    R: std::io::Read,
-{
-    pub reader: csv::Reader<R>,
+pub struct CsvStreamReader<'a> {
+    pub reader: AsyncDeserializer<&'a mut tokio::fs::File>,
 }
 
 /// A streaming CSV writer
-pub struct CsvStreamWriter<W> 
-where 
+pub struct CsvStreamWriter<W>
+where
     W: std::io::Write,
 {
     pub writer: csv::Writer<W>,
 }
-
-

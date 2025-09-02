@@ -1,9 +1,11 @@
+use futures::StreamExt;
 use rust_decimal::Decimal;
 use serde::Serialize;
 use tokio::sync::oneshot;
 
-use crate::{channel_actor::{self, ActorRef}, CsvStreamReader, CsvStreamWriter, 
-    ProcessorError, ProcessorResult, Transaction, TransactionType
+use crate::{
+    CsvStreamReader, CsvStreamWriter, ProcessorError, ProcessorResult, Transaction, TransactionType,
+    channel_actor::{self, ActorRef},
 };
 
 use super::wallet_actor::{WalletActor, WalletActorMessages, WalletState};
@@ -45,16 +47,14 @@ impl TransactionProcessor {
         }
 
         Self {
-            actor_count, 
-            wallet_actors 
+            actor_count,
+            wallet_actors,
         }
     }
-    
-    pub async fn process<R>(&mut self, mut stream: CsvStreamReader<R>) -> ProcessorResult<()>
-    where
-        R: std::io::Read,
-    {
-        for result in stream.reader.deserialize::<Transaction>() {
+
+    pub async fn process(&mut self, mut stream: CsvStreamReader<'_>) -> ProcessorResult<()> {
+        let mut records = stream.reader.deserialize::<Transaction>();
+        while let Some(result) = records.next().await {
             let tx = match result {
                 Ok(transaction) => transaction,
                 Err(e) => {
@@ -66,17 +66,17 @@ impl TransactionProcessor {
             // Validate amount for Deposits and Withdrawl. This validation also ensures
             // that we can safely unwrap amount out of the Option
             //
-            // ** Do not remove this. Removing this may make the WalletActor panic when it 
+            // ** Do not remove this. Removing this may make the WalletActor panic when it
             // unwraps the amount out of Option.
             if matches!(tx.tx_type, TransactionType::Deposit | TransactionType::Withdrawal) {
                 let amount = tx.amount.ok_or(ProcessorError::InvalidAmount {
-                    message: format!("invalid amount for tx_id={}", tx.id)
+                    message: format!("invalid amount for tx_id={}", tx.id),
                 })?;
 
                 if amount < Decimal::ZERO {
                     return Err(ProcessorError::InvalidAmount {
-                        message: format!("invalid amount for tx_id={}", tx.id)
-                    })    
+                        message: format!("invalid amount for tx_id={}", tx.id),
+                    });
                 }
             }
 
@@ -88,16 +88,16 @@ impl TransactionProcessor {
             // Sending WalletActor the transaction
             if let Err(e) = wallet_actor.tell(WalletActorMessages::Tx(tx)).await {
                 eprintln!("Channel Full, increase buffer size and run the test again {}", e);
-                return Err(ProcessorError::FatalError)
+                return Err(ProcessorError::FatalError);
             }
         }
-        
+
         Ok(())
     }
 
-    pub async fn output<W>(&mut self, mut stream: CsvStreamWriter<W>) -> ProcessorResult<()> 
+    pub async fn output<W>(&mut self, mut stream: CsvStreamWriter<W>) -> ProcessorResult<()>
     where
-        W: std::io::Write
+        W: std::io::Write,
     {
         for actor in self.wallet_actors.iter() {
             let (tx, rx) = oneshot::channel();
@@ -106,17 +106,20 @@ impl TransactionProcessor {
             if let Ok(wallet_state) = actor.ask(WalletActorMessages::Output(tx), rx).await {
                 for wallet in wallet_state {
                     let wallet_csv_view: WalletCsvView = wallet.into();
-                    
-                    stream.writer.serialize(wallet_csv_view).map_err(|e| { 
+
+                    stream.writer.serialize(wallet_csv_view).map_err(|e| {
                         eprintln!("SERDE ERROR: {:?}", e);
-                        ProcessorError::Serialization(e.to_string())})?;
+                        ProcessorError::Serialization(e.to_string())
+                    })?;
                 }
             }
-        }    
+        }
 
-        stream.writer.flush().map_err(|e| ProcessorError::Serialization(e.to_string()))?;
+        stream
+            .writer
+            .flush()
+            .map_err(|e| ProcessorError::Serialization(e.to_string()))?;
 
         Ok(())
     }
-    
-}    
+}
