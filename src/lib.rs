@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use csv_async::AsyncDeserializer;
+use csv_async::{AsyncDeserializer, AsyncSerializer};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use thiserror::Error;
@@ -26,8 +26,8 @@ pub enum ProcessorError {
     #[error("Invalid transaction: {message}")]
     InvalidTransaction { message: String },
 
-    #[error("Account locked: client {client_id}")]
-    AccountLocked { client_id: u16 },
+    #[error("Account locked: client {client}")]
+    AccountLocked { client: u16 },
 
     #[error("Insufficient funds: available {available}, required {required}")]
     InsufficientFunds {
@@ -109,9 +109,6 @@ pub struct CsvStreamReader<'a> {
 }
 
 /// A streaming CSV writer
-pub struct CsvStreamWriter<W>
-where
-    W: std::io::Write,
-{
-    pub writer: csv::Writer<W>,
+pub struct CsvStreamWriter {
+    pub writer: AsyncSerializer<tokio::io::Stdout>,
 }

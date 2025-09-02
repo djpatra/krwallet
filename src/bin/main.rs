@@ -1,6 +1,5 @@
 use std::{env, error::Error};
 
-use csv::{ReaderBuilder, Trim, WriterBuilder};
 use krwallet::{CsvStreamReader, CsvStreamWriter, wallet::processor::TransactionProcessor};
 
 // Someday we will read these const variables from config
@@ -26,8 +25,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     // The code should fail if the runtime could not be build
     let runtime = builder.enable_all().build()?;
 
-    let writer = WriterBuilder::new().has_headers(true).from_writer(std::io::stdout());
-
     runtime.block_on(async move {
         let mut input_file = tokio::fs::File::open(&args[1])
             .await
@@ -42,6 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         // Ignoring the errors from TransactionProcessor for now
         let _ = transaction_processor.process(CsvStreamReader { reader }).await;
 
+        let writer = csv_async::AsyncWriterBuilder::new().create_serializer(tokio::io::stdout());
         let _ = transaction_processor.output(CsvStreamWriter { writer }).await;
     });
 

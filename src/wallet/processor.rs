@@ -17,7 +17,7 @@ pub struct TransactionProcessor {
 
 #[derive(Serialize)]
 struct WalletCsvView {
-    client_id: u16,
+    client: u16,
     available: String,
     held: String,
     total: String,
@@ -27,7 +27,7 @@ struct WalletCsvView {
 impl From<WalletState> for WalletCsvView {
     fn from(state: WalletState) -> Self {
         Self {
-            client_id: state.client_id,
+            client: state.client,
             available: format!("{:.4}", state.wallet.available.round_dp(4)),
             held: format!("{:.4}", state.wallet.held.round_dp(4)),
             total: format!("{:.4}", state.wallet.total.round_dp(4)),
@@ -95,10 +95,7 @@ impl TransactionProcessor {
         Ok(())
     }
 
-    pub async fn output<W>(&mut self, mut stream: CsvStreamWriter<W>) -> ProcessorResult<()>
-    where
-        W: std::io::Write,
-    {
+    pub async fn output(&mut self, mut stream: CsvStreamWriter) -> ProcessorResult<()> {
         for actor in self.wallet_actors.iter() {
             let (tx, rx) = oneshot::channel();
 
@@ -107,7 +104,7 @@ impl TransactionProcessor {
                 for wallet in wallet_state {
                     let wallet_csv_view: WalletCsvView = wallet.into();
 
-                    stream.writer.serialize(wallet_csv_view).map_err(|e| {
+                    stream.writer.serialize(wallet_csv_view).await.map_err(|e| {
                         eprintln!("SERDE ERROR: {:?}", e);
                         ProcessorError::Serialization(e.to_string())
                     })?;
@@ -118,6 +115,7 @@ impl TransactionProcessor {
         stream
             .writer
             .flush()
+            .await
             .map_err(|e| ProcessorError::Serialization(e.to_string()))?;
 
         Ok(())

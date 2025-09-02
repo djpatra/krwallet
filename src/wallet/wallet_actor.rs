@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use rust_decimal::Decimal;
+use std::collections::HashMap;
 use tokio::sync::oneshot;
 
-use crate::{channel_actor::ChannelActor, ProcessorError, ProcessorResult, Transaction, TransactionType};
+use crate::{ProcessorError, ProcessorResult, Transaction, TransactionType, channel_actor::ChannelActor};
 
 #[derive(Debug)]
 pub(crate) enum WalletActorMessages {
@@ -21,17 +21,16 @@ pub struct Wallet {
 }
 
 #[derive(Debug)]
-pub(crate) struct  WalletState {
-    pub client_id: u16,
+pub(crate) struct WalletState {
+    pub client: u16,
     pub wallet: Wallet,
 }
-
 
 impl Wallet {
     pub fn process_transaction(&mut self, tx: Transaction) -> ProcessorResult<()> {
         // If the wallet is locked, then no deposits and withdrawals are allowed
         if self.locked && matches!(tx.tx_type, TransactionType::Deposit | TransactionType::Withdrawal) {
-            return Err(ProcessorError::AccountLocked { client_id: tx.client })
+            return Err(ProcessorError::AccountLocked { client: tx.client });
         }
 
         match tx.tx_type {
@@ -43,45 +42,48 @@ impl Wallet {
         }
     }
 
-    fn handle_deposit(&mut self, tx: Transaction) -> ProcessorResult<()> {        
+    fn handle_deposit(&mut self, tx: Transaction) -> ProcessorResult<()> {
         if self.transactions.contains_key(&tx.id) {
             return Err(ProcessorError::DuplicateTransaction { tx_id: tx.id });
         }
 
-        // Safe unwrap as validation done earlier in Processor        
+        // Safe unwrap as validation done earlier in Processor
         self.available += tx.amount.unwrap();
 
         self.transactions.insert(tx.id, tx);
         Ok(())
     }
 
-    
-    fn handle_withdrawl(&mut self, tx: Transaction) -> ProcessorResult<()> {        
+    fn handle_withdrawl(&mut self, tx: Transaction) -> ProcessorResult<()> {
         if self.transactions.contains_key(&tx.id) {
             return Err(ProcessorError::DuplicateTransaction { tx_id: tx.id });
         }
 
-        // Safe unwrap as validation done earlier in Processor        
+        // Safe unwrap as validation done earlier in Processor
         let amount = tx.amount.unwrap();
-        
+
         if self.available < amount {
-            return Err(ProcessorError::InsufficientFunds { available: self.available, required: amount });
+            return Err(ProcessorError::InsufficientFunds {
+                available: self.available,
+                required: amount,
+            });
         }
-        
+
         self.available -= amount;
         self.transactions.insert(tx.id, tx);
         Ok(())
     }
 
-
     fn handle_dispute(&mut self, tx_id: u32) -> ProcessorResult<()> {
-        let tx = self.transactions.get_mut(&tx_id)
+        let tx = self
+            .transactions
+            .get_mut(&tx_id)
             .ok_or(ProcessorError::TransactionNotFound { tx_id })?;
 
         tx.disputed = true;
-        // Safe unwrap as validation done earlier in Processor        
+        // Safe unwrap as validation done earlier in Processor
         let amount = tx.amount.unwrap();
-        
+
         match tx.tx_type {
             TransactionType::Deposit => {
                 // We are allowing negative wallet balance
@@ -93,22 +95,24 @@ impl Wallet {
             }
             _ => {} // NoOp, as we keep track of deposits and withdrawls only
         }
-        
+
         Ok(())
     }
 
     fn handle_resolve(&mut self, tx_id: u32) -> ProcessorResult<()> {
-        let tx = self.transactions.get_mut(&tx_id)
+        let tx = self
+            .transactions
+            .get_mut(&tx_id)
             .ok_or(ProcessorError::TransactionNotFound { tx_id })?;
-        
+
         if !tx.disputed {
-            return Err(ProcessorError::InvalidDisputeState) // Ignore if not disputed
+            return Err(ProcessorError::InvalidDisputeState); // Ignore if not disputed
         }
 
         tx.disputed = false;
         // Safe unwrap as validation done earlier in Processor
         let amount = tx.amount.unwrap();
-        
+
         match tx.tx_type {
             TransactionType::Deposit => {
                 self.held -= amount;
@@ -119,22 +123,24 @@ impl Wallet {
             }
             _ => {} // NoOp, as we keep track of deposits and withdrawls only
         }
-        
+
         Ok(())
     }
-    
+
     fn handle_chargeback(&mut self, tx_id: u32) -> ProcessorResult<()> {
-        let tx = self.transactions.get_mut(&tx_id)
+        let tx = self
+            .transactions
+            .get_mut(&tx_id)
             .ok_or(ProcessorError::TransactionNotFound { tx_id })?;
-        
+
         if !tx.disputed {
-            return Err(ProcessorError::InvalidDisputeState) // Ignore if not disputed
+            return Err(ProcessorError::InvalidDisputeState); // Ignore if not disputed
         }
 
         tx.disputed = false;
-        // Safe unwrap as validation done earlier in Processor        
+        // Safe unwrap as validation done earlier in Processor
         let amount = tx.amount.unwrap();
-        
+
         match tx.tx_type {
             TransactionType::Deposit => {
                 self.held -= amount;
@@ -147,20 +153,19 @@ impl Wallet {
             }
             _ => {}
         }
-        
+
         Ok(())
     }
-}    
-
+}
 
 pub(crate) struct WalletActor {
-     wallets: HashMap<u16, Wallet>,
+    wallets: HashMap<u16, Wallet>,
 }
 
 impl WalletActor {
     pub(crate) fn create() -> Self {
         Self {
-            wallets: HashMap::new()
+            wallets: HashMap::new(),
         }
     }
 }
@@ -169,22 +174,23 @@ impl WalletActor {
 impl ChannelActor<WalletActorMessages> for WalletActor {
     async fn handle(&mut self, msg: WalletActorMessages) -> ProcessorResult<()> {
         use WalletActorMessages::*;
-        
+
         match msg {
-            Tx(tx) => {    
-                let wallet = self.wallets.entry(tx.client)
-                .or_insert_with(|| Wallet::default());
+            Tx(tx) => {
+                let wallet = self.wallets.entry(tx.client).or_insert_with(|| Wallet::default());
 
                 wallet.process_transaction(tx)?;
-            },
+            }
 
             Output(sender) => {
                 // Consume the state as we have finished processing the transactions
-                let state: Vec<WalletState> = std::mem::take(&mut self.wallets).into_iter()
-                    .map(|(client_id, mut wallet)| {
+                let state: Vec<WalletState> = std::mem::take(&mut self.wallets)
+                    .into_iter()
+                    .map(|(client, mut wallet)| {
                         wallet.total = wallet.available + wallet.held;
-                        WalletState { client_id, wallet }
-                    }).collect();
+                        WalletState { client, wallet }
+                    })
+                    .collect();
                 let _ = sender.send(state);
             }
         }
@@ -193,11 +199,10 @@ impl ChannelActor<WalletActorMessages> for WalletActor {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rust_decimal::{prelude::FromPrimitive, Decimal};
+    use rust_decimal::{Decimal, prelude::FromPrimitive};
 
     fn make_tx(id: u32, client: u16, tx_type: TransactionType, amount: Option<Decimal>) -> Transaction {
         Transaction {
@@ -237,8 +242,12 @@ mod tests {
     #[test]
     fn withdrawal_reduces_balance() {
         let mut wallet = Wallet::default();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(100.0))).unwrap();
-        wallet.process_transaction(make_tx(2, 100, TransactionType::Withdrawal, Decimal::from_f32(30.0))).unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(100.0)))
+            .unwrap();
+        wallet
+            .process_transaction(make_tx(2, 100, TransactionType::Withdrawal, Decimal::from_f32(30.0)))
+            .unwrap();
 
         assert_eq!(Some(wallet.available), Decimal::from_f32(70.0));
     }
@@ -246,9 +255,13 @@ mod tests {
     #[test]
     fn withdrawal_insufficient_funds_fails() {
         let mut wallet = Wallet::default();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(20.0))).unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(20.0)))
+            .unwrap();
 
-        let err = wallet.process_transaction(make_tx(2, 100, TransactionType::Withdrawal, Decimal::from_f32(50.0))).unwrap_err();
+        let err = wallet
+            .process_transaction(make_tx(2, 100, TransactionType::Withdrawal, Decimal::from_f32(50.0)))
+            .unwrap_err();
 
         match err {
             ProcessorError::InsufficientFunds { available, required } => {
@@ -264,7 +277,9 @@ mod tests {
         let mut wallet = Wallet::default();
         let deposit = make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(100.0));
         wallet.process_transaction(deposit).unwrap();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Dispute, None)).unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Dispute, None))
+            .unwrap();
 
         assert_eq!(Some(wallet.available), Decimal::from_f32(0.0));
         assert_eq!(Some(wallet.held), Decimal::from_f32(100.0));
@@ -273,10 +288,18 @@ mod tests {
     #[test]
     fn resolve_moves_back_from_held() {
         let mut wallet = Wallet::default();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(100.0))).unwrap();
-        wallet.process_transaction(make_tx(2, 100, TransactionType::Deposit, Decimal::from_f32(100.0))).unwrap();
-        wallet.process_transaction(make_tx(2, 100, TransactionType::Dispute, None)).unwrap();
-        wallet.process_transaction(make_tx(2, 100, TransactionType::Resolve, None)).unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(100.0)))
+            .unwrap();
+        wallet
+            .process_transaction(make_tx(2, 100, TransactionType::Deposit, Decimal::from_f32(100.0)))
+            .unwrap();
+        wallet
+            .process_transaction(make_tx(2, 100, TransactionType::Dispute, None))
+            .unwrap();
+        wallet
+            .process_transaction(make_tx(2, 100, TransactionType::Resolve, None))
+            .unwrap();
 
         assert_eq!(Some(wallet.available), Decimal::from_f32(200.0));
         assert_eq!(Some(wallet.held), Decimal::from_f32(0.0));
@@ -285,9 +308,15 @@ mod tests {
     #[test]
     fn chargeback_locks_account_and_removes_funds() {
         let mut wallet = Wallet::default();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(200.0))).unwrap();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Dispute, None)).unwrap();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Chargeback, None)).unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(200.0)))
+            .unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Dispute, None))
+            .unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Chargeback, None))
+            .unwrap();
 
         assert!(wallet.locked);
         assert_eq!(Some(wallet.available), Decimal::from_f32(0.0));
@@ -297,14 +326,24 @@ mod tests {
     #[test]
     fn locked_account_rejects_new_deposits_and_withdrawals() {
         let mut wallet = Wallet::default();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(100.0))).unwrap();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Dispute, None)).unwrap();
-        wallet.process_transaction(make_tx(1, 100, TransactionType::Chargeback, None)).unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(100.0)))
+            .unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Dispute, None))
+            .unwrap();
+        wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Chargeback, None))
+            .unwrap();
 
-        let deposit_err = wallet.process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(50.0))).unwrap_err();
+        let deposit_err = wallet
+            .process_transaction(make_tx(1, 100, TransactionType::Deposit, Decimal::from_f32(50.0)))
+            .unwrap_err();
         assert!(matches!(deposit_err, ProcessorError::AccountLocked { .. }));
 
-        let withdrawal_err = wallet.process_transaction(make_tx(5, 100, TransactionType::Withdrawal, Decimal::from_f32(10.0))).unwrap_err();
+        let withdrawal_err = wallet
+            .process_transaction(make_tx(5, 100, TransactionType::Withdrawal, Decimal::from_f32(10.0)))
+            .unwrap_err();
         assert!(matches!(withdrawal_err, ProcessorError::AccountLocked { .. }));
     }
 }
