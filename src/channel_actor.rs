@@ -1,6 +1,11 @@
-use tokio::sync::{mpsc, oneshot};
+use std::time::Duration;
 
-use crate::{map_channel_recv_err, map_channel_send_err, ProcessorError, ProcessorResult};
+use tokio::sync::{
+    mpsc::{self, error::TrySendError},
+    oneshot,
+};
+
+use crate::{ProcessorError, ProcessorResult, map_channel_recv_err, map_channel_send_err};
 
 #[derive(Debug)]
 pub struct ActorRef<M>
@@ -19,16 +24,28 @@ impl<M: Send + 'static> Clone for ActorRef<M> {
 }
 
 impl<M: Send> ActorRef<M> {
-    /// Fire-and-forget send. 
-    pub async fn tell(&self, msg: M) -> ProcessorResult<()> {
-        self.sender.send(msg).await.map_err(map_channel_send_err)
+    pub async fn tell(&self, mut msg: M) -> ProcessorResult<()> {
+        // We try indefinitely to send the message
+        loop {
+            match self.sender.try_send(msg) {
+                Ok(()) => return Ok(()),
+                Err(TrySendError::Full(m)) => {
+                    msg = m;
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    eprintln!("Channel buffer full. Trying again")
+                }
+                Err(TrySendError::Closed(m)) => {
+                    return Err(map_channel_send_err(TrySendError::Closed(m)));
+                }
+            }
+        }
     }
 
     /// Ask pattern: send a message and wait for a response.
     /// The message type `M` should contain an `oneshot::Sender<R>`.
-    pub async fn ask<R>(&self, msg: M, response_channel: oneshot::Receiver<R>) -> ProcessorResult<R> 
+    pub async fn ask<R>(&self, msg: M, response_channel: oneshot::Receiver<R>) -> ProcessorResult<R>
     where
-        R: Send + 'static,
+        R: Send,
     {
         self.tell(msg).await?;
         response_channel.await.map_err(map_channel_recv_err)
@@ -58,14 +75,14 @@ where
         // Run the actor indefinitely
         while let Some(msg) = rx.recv().await {
             if let Err(err) = actor_instance.handle(msg).await {
-                // Not the right way to kill an actor. Ideally, we should have 
+                // Not the right way to kill an actor. Ideally, we should have
                 // an explicit PoisonPill message sent to self and then exit
                 match err {
                     ProcessorError::FatalError => {
                         break;
-                    },
+                    }
                     _ => {
-                        // Commenting out this so that test outputs do not get polluted; 
+                        // Commenting out this so that test outputs do not get polluted;
                         // ToDo: Log errors to file
                         // eprintln!("Actor error: {:?}", err);
                     }
@@ -80,8 +97,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::oneshot;
     use std::sync::{Arc, Mutex};
+    use tokio::sync::oneshot;
 
     // simple test actor
     struct TestActor {
@@ -113,10 +130,7 @@ mod tests {
     #[tokio::test]
     async fn test_tell_updates_state() {
         let state = Arc::new(Mutex::new(Vec::new()));
-        let actor = start(
-            TestActor { state: state.clone() },
-            8
-        ).await;
+        let actor = start(TestActor { state: state.clone() }, 8).await;
 
         actor.tell(TestMessage::Store(10)).await.unwrap();
         actor.tell(TestMessage::Store(20)).await.unwrap();
@@ -131,17 +145,15 @@ mod tests {
     #[tokio::test]
     async fn test_ask_returns_state() {
         let state = Arc::new(Mutex::new(Vec::new()));
-        let actor = start(
-            TestActor { state: state.clone() },
-            8
-        ).await;
+        let actor = start(TestActor { state: state.clone() }, 8).await;
 
         actor.tell(TestMessage::Store(42)).await.unwrap();
 
         let (tx, rx) = oneshot::channel();
-        actor.ask(TestMessage::Get(tx), rx).await
+        actor
+            .ask(TestMessage::Get(tx), rx)
+            .await
             .map(|result| assert_eq!(result, vec![42]))
             .unwrap();
     }
 }
-

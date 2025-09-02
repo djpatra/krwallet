@@ -4,7 +4,7 @@ use csv_async::{AsyncDeserializer, AsyncSerializer};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use thiserror::Error;
-use tokio::sync::{mpsc::error::SendError, oneshot::error::RecvError};
+use tokio::sync::{mpsc::error::TrySendError, oneshot::error::RecvError};
 
 pub mod channel_actor;
 pub mod wallet;
@@ -51,7 +51,7 @@ pub enum ProcessorError {
     Serialization(String),
 }
 
-pub fn map_channel_send_err<M>(err: SendError<M>) -> ProcessorError {
+pub fn map_channel_send_err<M>(err: TrySendError<M>) -> ProcessorError {
     let e = format!("{}", err);
     ProcessorError::ActorTxSendError(e)
 }
