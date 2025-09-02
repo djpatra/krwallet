@@ -25,7 +25,8 @@ impl<M: Send + 'static> Clone for ActorRef<M> {
 
 impl<M: Send> ActorRef<M> {
     pub async fn tell(&self, mut msg: M) -> ProcessorResult<()> {
-        // We try indefinitely to send the message
+        // We try indefinitely to send the message. We should add
+        // a timed variant of tell later.
         loop {
             match self.sender.try_send(msg) {
                 Ok(()) => return Ok(()),
@@ -135,8 +136,10 @@ mod tests {
         actor.tell(TestMessage::Store(10)).await.unwrap();
         actor.tell(TestMessage::Store(20)).await.unwrap();
 
-        // give task a chance to process
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        // Send sync message to ensure all previous messages are processed
+        let (sync_tx, sync_rx) = tokio::sync::oneshot::channel();
+        actor.tell(TestMessage::Get(sync_tx)).await.unwrap();
+        sync_rx.await.unwrap();
 
         let snapshot = state.lock().unwrap().clone();
         assert_eq!(snapshot, vec![10, 20]);
